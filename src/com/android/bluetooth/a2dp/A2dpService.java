@@ -34,6 +34,7 @@ import android.provider.Settings;
 import android.support.annotation.GuardedBy;
 import android.support.annotation.VisibleForTesting;
 import android.util.Log;
+import android.os.SystemProperties;
 
 import com.android.bluetooth.BluetoothMetricsProto;
 import com.android.bluetooth.Utils;
@@ -350,19 +351,25 @@ public class A2dpService extends ProfileService {
                     + " : too many connected devices");
             return false;
         }
-        // Check priority and accept or reject the connection
+        // Check priority and accept or reject the connection.
+        // Note: Logic can be simplified, but keeping it this way for readability
         int priority = getPriority(device);
         int bondState = mAdapterService.getBondState(device);
-        // If priority is undefined, it is likely that our SDP has not completed and peer is
-        // initiating the connection. Allow the connection only if the device is bonded or bonding.
-        if ((priority == BluetoothProfile.PRIORITY_UNDEFINED)
-                && (bondState == BluetoothDevice.BOND_NONE)) {
-            Log.e(TAG, "okToConnect: cannot connect to " + device + " : priority=" + priority
-                    + " bondState=" + bondState);
-            return false;
-        }
-        if (priority <= BluetoothProfile.PRIORITY_OFF) {
-            Log.e(TAG, "okToConnect: cannot connect to " + device + " : priority=" + priority);
+        // If priority is undefined, it is likely that service discovery has not completed and peer
+        // initiated the connection. Allow this connection only if the device is bonded or bonding
+        boolean serviceDiscoveryPending = (priority == BluetoothProfile.PRIORITY_UNDEFINED)
+                && (bondState == BluetoothDevice.BOND_BONDING
+                || bondState == BluetoothDevice.BOND_BONDED);
+        // Also allow connection when device is bonded/bonding and priority is ON/AUTO_CONNECT.
+        boolean isEnabled = (priority == BluetoothProfile.PRIORITY_ON
+                || priority == BluetoothProfile.PRIORITY_AUTO_CONNECT)
+                && (bondState == BluetoothDevice.BOND_BONDED
+                || bondState == BluetoothDevice.BOND_BONDING);
+        if (!serviceDiscoveryPending && !isEnabled) {
+            // Otherwise, reject the connection if no service discovery is pending and priority is
+            // neither PRIORITY_ON nor PRIORITY_AUTO_CONNECT
+            Log.w(TAG, "okToConnect: return false, priority=" + priority + ", bondState="
+                    + bondState);
             return false;
         }
         return true;
@@ -494,7 +501,11 @@ public class A2dpService extends ProfileService {
                 // Inform the Audio Service about the codec configuration
                 // change, so the Audio Service can reset accordingly the audio
                 // feeding parameters in the Audio HAL to the Bluetooth stack.
-                mAudioManager.handleBluetoothA2dpDeviceConfigChange(mActiveDevice);
+                String offloadSupported =
+                     SystemProperties.get("persist.vendor.bt.enable.splita2dp");
+                if (!(offloadSupported.isEmpty() || "true".equals(offloadSupported))) {
+                    mAudioManager.handleBluetoothA2dpDeviceConfigChange(mActiveDevice);
+                }
             }
         }
         return true;
