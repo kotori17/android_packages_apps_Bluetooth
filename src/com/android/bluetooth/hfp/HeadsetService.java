@@ -1263,6 +1263,9 @@ public class HeadsetService extends ProfileService {
                         Log.w(TAG, "setActiveDevice: disconnectAudio failed on " + mActiveDevice);
                     }
                 }
+                if (!mNativeInterface.setActiveDevice(null)) {
+                    Log.w(TAG, "setActiveDevice: Cannot set active device as null in native layer");
+                }
                 mActiveDevice = null;
                 broadcastActiveDevice(null);
                 return true;
@@ -1803,7 +1806,7 @@ public class HeadsetService extends ProfileService {
         boolean returnVal;
         enforceCallingOrSelfPermission(BLUETOOTH_PERM, "Need BLUETOOTH permission");
         returnVal = BluetoothHeadset.isInbandRingingSupported(this) && !SystemProperties.getBoolean(
-                DISABLE_INBAND_RINGING_PROPERTY, false) && !mInbandRingingRuntimeDisable;
+                DISABLE_INBAND_RINGING_PROPERTY, true) && !mInbandRingingRuntimeDisable;
         Log.d(TAG, "isInbandRingingEnabled returning: " + returnVal);
         return returnVal;
     }
@@ -1834,11 +1837,13 @@ public class HeadsetService extends ProfileService {
             }
             if (fromState != BluetoothProfile.STATE_DISCONNECTED
                     && toState == BluetoothProfile.STATE_DISCONNECTED) {
-                if (audioConnectableDevices.size() <= 1 && isInbandRingingEnabled()) {
+                if (audioConnectableDevices.size() <= 1 ) {
                     mInbandRingingRuntimeDisable = false;
-                    doForEachConnectedStateMachine(
+                    if(isInbandRingingEnabled()) {
+                        doForEachConnectedStateMachine(
                             stateMachine -> stateMachine.sendMessage(HeadsetStateMachine.SEND_BSIR,
-                                    1));
+                                   1));
+                    }
                 }
                 if (device.equals(mActiveDevice)) {
                     AdapterService adapterService = AdapterService.getAdapterService();
@@ -1940,17 +1945,20 @@ public class HeadsetService extends ProfileService {
                                 + "voice call");
                     }
                 }
-                // trigger SCO after SCO disconnected with previous active
-                // device
-                if (mActiveDevice != null && !mActiveDevice.equals(device) &&
+                //Transfer SCO is not needed for TWS+ devices
+                if (!mAdapterService.isTwsPlusDevice(device)) {
+                    // trigger SCO after SCO disconnected with previous active
+                    // device
+                    if (mActiveDevice != null && !mActiveDevice.equals(device) &&
                                  shouldPersistAudio()) {
-                   Log.d(TAG, "onAudioStateChangedFromStateMachine: triggering SCO with device "
+                        Log.d(TAG, "onAudioStateChangedFromStateMachine: triggering SCO with device "
                               + mActiveDevice);
-                   if (!connectAudio(mActiveDevice)) {
-                       Log.w(TAG, "onAudioStateChangedFromStateMachine, failed to connect"
-                          + " audio to new " + "active device " + mActiveDevice
-                          + ", after " + device + " is disconnected from SCO");
-                   }
+                       if (!connectAudio(mActiveDevice)) {
+                           Log.w(TAG, "onAudioStateChangedFromStateMachine, failed to connect"
+                              + " audio to new " + "active device " + mActiveDevice
+                              + ", after " + device + " is disconnected from SCO");
+                       }
+                    }
                 }
             }
         }
